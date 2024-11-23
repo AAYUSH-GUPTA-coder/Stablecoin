@@ -56,6 +56,7 @@ contract DSCEngine is ReentrancyGuard {
     error DSCEngine__BreakHealthFactor(uint256 healthFactor);
     error DSCEngine__MintFailed();
     error DSCEngine__HealthFactorOK();
+    error DSCEngine__HealthFactorNotImproved();
 
     //********************* */
     // State Variables      //
@@ -186,7 +187,7 @@ contract DSCEngine is ReentrancyGuard {
 
         _revertIfHealthFactorIsBroken(msg.sender);
     }
-    
+
     function mintDsc(uint256 _amountDscToMint) public moreThanZero(_amountDscToMint) nonReentrant {
         // 1. check if user collateral value > DSC amount
         s_DSCMinted[msg.sender] += _amountDscToMint;
@@ -201,10 +202,7 @@ contract DSCEngine is ReentrancyGuard {
      * @param _amount amount of DSC token to burn
      */
     function burnDsc(uint256 _amount) public moreThanZero(_amount) nonReentrant {
-        s_DSCMinted[msg.sender] -= _amount;
-        bool success = i_dsc.transferFrom(msg.sender, address(this), _amount);
-        if (!success) revert DSCEngine__TransferFailed();
-        i_dsc.burn(_amount);
+        _burnDsc(_amount, msg.sender, msg.sender);
         _revertIfHealthFactorIsBroken(msg.sender); // I don't think this would ever be needed
     }
 
@@ -266,6 +264,18 @@ contract DSCEngine is ReentrancyGuard {
         uint256 bonusCollateral = (tokenAmountFromDebtCovered * LIQUIDATION_BONUS) / LIQUIDATION_PRECISION;
 
         uint256 totalCollateralToRedeem = tokenAmountFromDebtCovered + bonusCollateral;
+        _redeemCollateral(_user, msg.sender, _collateral, totalCollateralToRedeem);
+        // burn DSC
+        _burnDsc(_debtToCover, _user, msg.sender);
+
+        // check that health factor of the user has improved
+        uint256 endingUserHealthFactor = _healthFactor(_user);
+        if (endingUserHealthFactor <= startingUserHealthFactor) {
+            revert DSCEngine__HealthFactorNotImproved();
+        }
+
+        // check that health factor of the liquidator remain above MINIMUM_HEALTH_FACTOR after liquidating the user
+        _revertIfHealthFactorIsBroken(msg.sender);
     }
 
     function getHealthFactor() external view returns (uint256) {}
@@ -277,6 +287,19 @@ contract DSCEngine is ReentrancyGuard {
     //***************************************** */
     // Private and Internal View Functions      //
     //***************************************** */
+
+    /**
+     * @dev low-level internal function, do not call unless the function calling it, is checking for health factor
+     * @param _amountDscToBurn amount to burn
+     * @param _onBehalfOf address of the user, whose debt is getting squared off
+     * @param _dscFrom address of the liquidator, whose DSC is being burned and who is squarring off the debt of the user / _onBehalfOf address
+     */
+    function _burnDsc(uint256 _amountDscToBurn, address _onBehalfOf, address _dscFrom) private {
+        s_DSCMinted[_onBehalfOf] -= _amountDscToBurn;
+        bool success = i_dsc.transferFrom(_dscFrom, address(this), _amountDscToBurn);
+        if (!success) revert DSCEngine__TransferFailed();
+        i_dsc.burn(_amountDscToBurn);
+    }
 
     function _getAccountInformation(address _user)
         private
