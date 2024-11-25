@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, console} from "forge-std/Test.sol";
 import {DeployDSC} from "../../script/DeployDSC.s.sol";
 import {DecentralizedStableCoin} from "../../src/DecentralizedStableCoin.sol";
 import {DSCEngine} from "../../src/DSCEngine.sol";
@@ -84,5 +84,43 @@ contract DSCEngineTest is Test {
         vm.expectRevert(DSCEngine.DSCEngine__TokenNotAllowed.selector);
         dsce.depositCollateral(address(testToken), AMOUNT_COLLATERAL);
         vm.stopPrank();
+    }
+
+    modifier approveCollateral() {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(dsce), AMOUNT_COLLATERAL);
+        vm.stopPrank();
+        _;
+    }
+
+    function testRevertWithNeedsMoreThanZero() public approveCollateral {
+        vm.startPrank(USER);
+        // ERC20Mock(weth).approve(address(dsce), AMOUNT_COLLATERAL);
+        vm.expectRevert(DSCEngine.DSCEngine__NeedsMoreThanZero.selector);
+        dsce.depositCollateral(weth, 0);
+        vm.stopPrank();
+    }
+
+    function testCanDepositCollateralAndCheckCollateralDepositedEvent() public approveCollateral {
+        vm.startPrank(USER);
+        // ERC20Mock(weth).approve(address(dsce), AMOUNT_COLLATERAL);
+        vm.expectEmit(true, true, true, true);
+        emit DSCEngine.CollateralDeposited(USER, weth, AMOUNT_COLLATERAL);
+        dsce.depositCollateral(weth, AMOUNT_COLLATERAL);
+    }
+
+    modifier depositedCollateral() {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(dsce), AMOUNT_COLLATERAL);
+        dsce.depositCollateral(weth, AMOUNT_COLLATERAL);
+        vm.stopPrank();
+        _;
+    }
+
+    function testCanDepositCollateralAndGetAccountInfo() public depositedCollateral {
+        (uint256 totalDscMinted, uint256 collateralValueInUsd) = dsce.getAccountInformation(USER);
+        assertEq(totalDscMinted, 0);
+        uint256 expectedAmountCollateralInUsd = dsce.getUsdValue(weth, AMOUNT_COLLATERAL);
+        assertEq(collateralValueInUsd, expectedAmountCollateralInUsd);
     }
 }
