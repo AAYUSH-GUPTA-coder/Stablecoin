@@ -282,12 +282,6 @@ contract DSCEngine is ReentrancyGuard {
         _revertIfHealthFactorIsBroken(msg.sender);
     }
 
-    function getHealthFactor() external view returns (uint256) {}
-
-    function getCollateralValue() external view returns (uint256) {}
-
-    function getDscValue() external view returns (uint256) {}
-
     //***************************************** */
     // Private and Internal View Functions      //
     //***************************************** */
@@ -324,15 +318,30 @@ contract DSCEngine is ReentrancyGuard {
      * Returns how close to liquidation a user is
      * if a user goes below 1, they can get liquidated
      */
-    function _healthFactor(address _user) private view returns (uint256) {
-        // total DSC minted
-        // total collateral Value
+    function _healthFactor(address _user) private view returns (uint256 healthFactor) {
+        // // total DSC minted
+        // // total collateral Value
+        // (uint256 totalDscMinted, uint256 collateralValueInUsd) = _getAccountInformation(_user);
+
+        // // (1000 * 50) / 100
+        // // 50,000 / 100 = 500
+        // uint256 collateralAdjustedForThreshold = (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+        // // (500 * 1e18) / 100 * 1e18 = 5 > 1
+        // //! testing
+        // // if (totalDscMinted == 0) return (collateralAdjustedForThreshold * PRECISION) / 1e18;
+        // // return (collateralAdjustedForThreshold * PRECISION) / totalDscMinted;
+        // if (totalDscMinted == 0) {
+        //     healthFactor = (collateralAdjustedForThreshold * PRECISION) / 1e18;
+        // } else {
+        //     healthFactor = (collateralAdjustedForThreshold * PRECISION) / totalDscMinted;
+        // }
+
         (uint256 totalDscMinted, uint256 collateralValueInUsd) = _getAccountInformation(_user);
+        if (totalDscMinted == 0) return type(uint256).max;
 
         // (1000 * 50) / 100
         // 50,000 / 100 = 500
         uint256 collateralAdjustedForThreshold = (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
-        // (500 * 1e18) / 100 * 1e18 = 5 > 1
         return (collateralAdjustedForThreshold * PRECISION) / totalDscMinted;
     }
 
@@ -399,5 +408,17 @@ contract DSCEngine is ReentrancyGuard {
         returns (uint256 totalDscMinted, uint256 collateralValueInUsd)
     {
         (totalDscMinted, collateralValueInUsd) = _getAccountInformation(_user);
+    }
+
+    function getUserHealthFactor(address _user) external view returns (uint256 healthFactor) {
+        healthFactor = _healthFactor(_user);
+    }
+
+    function getCollateralValue() external view returns (uint256) {}
+
+    function getDscValue() external view returns (uint256) {}
+
+    function getDSCMinted(address _user) external view returns (uint256 balance) {
+        balance = s_DSCMinted[_user];
     }
 }
