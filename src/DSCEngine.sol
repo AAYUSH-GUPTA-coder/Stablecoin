@@ -188,6 +188,10 @@ contract DSCEngine is ReentrancyGuard {
         _revertIfHealthFactorIsBroken(msg.sender);
     }
 
+    /**
+     * function to mint DSC token
+     * @param _amountDscToMint amount of DSC token to mint
+     */
     function mintDsc(uint256 _amountDscToMint) public moreThanZero(_amountDscToMint) nonReentrant {
         // 1. check if user collateral value > DSC amount
         s_DSCMinted[msg.sender] += _amountDscToMint;
@@ -301,6 +305,12 @@ contract DSCEngine is ReentrancyGuard {
         i_dsc.burn(_amountDscToBurn);
     }
 
+    /**
+     * function to get TotalDSCToken minted and Collateral Deposied in USD by the user
+     * @param _user address of the user
+     * @return totalDscMinted returns Total amount DSC minted by the user
+     * @return collateralValueInUsd returns the total Amount of Collateral deposited by the user
+     */
     function _getAccountInformation(address _user)
         private
         view
@@ -319,7 +329,8 @@ contract DSCEngine is ReentrancyGuard {
         // total collateral Value
         (uint256 totalDscMinted, uint256 collateralValueInUsd) = _getAccountInformation(_user);
 
-        // (1000 * 50) / 100 = 500
+        // (1000 * 50) / 100
+        // 50,000 / 100 = 500
         uint256 collateralAdjustedForThreshold = (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
         // (500 * 1e18) / 100 * 1e18 = 5 > 1
         return (collateralAdjustedForThreshold * PRECISION) / totalDscMinted;
@@ -374,5 +385,19 @@ contract DSCEngine is ReentrancyGuard {
 
         // ($1000e18 * 1e18) / ($2000e8 * 1e10) = 0.5e18
         return (_usdAmountInWei * PRECISION) / (uint256(price) * ADDITIONAL_FEED_PRECISION);
+    }
+
+    /**
+     * function to get TotalDSCToken minted and Collateral Deposied in USD by the user
+     * @param _user address of the user
+     * @return totalDscMinted returns Total amount DSC minted by the user
+     * @return collateralValueInUsd returns the total Amount of Collateral deposited by the user
+     */
+    function getAccountInformation(address _user)
+        external
+        view
+        returns (uint256 totalDscMinted, uint256 collateralValueInUsd)
+    {
+        (totalDscMinted, collateralValueInUsd) = _getAccountInformation(_user);
     }
 }
