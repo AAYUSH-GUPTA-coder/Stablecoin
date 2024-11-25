@@ -17,6 +17,7 @@ contract DSCEngineTest is Test {
     address ethUsdPriceFeed;
     address weth;
     address btcUsdPriceFeed;
+    uint256 amountToMint = 100 ether;
 
     address[] public tokenAddresses;
     address[] public priceFeedAddresses;
@@ -123,4 +124,70 @@ contract DSCEngineTest is Test {
         uint256 expectedAmountCollateralInUsd = dsce.getUsdValue(weth, AMOUNT_COLLATERAL);
         assertEq(collateralValueInUsd, expectedAmountCollateralInUsd);
     }
+
+    ///////////////////////////////////
+    // mintDsc Tests                //
+    //////////////////////////////////
+
+    function testCanMintDsc() public depositedCollateral {
+        vm.prank(USER);
+        dsce.mintDsc(amountToMint);
+
+        uint256 userBalance = dsc.balanceOf(USER);
+        assertEq(userBalance, amountToMint);
+    }
+
+    function testChecks_DSCMinted() public depositedCollateral {
+        vm.prank(USER);
+        dsce.mintDsc(amountToMint);
+
+        uint256 userBalance = dsce.getDSCMinted(USER);
+        assertEq(userBalance, amountToMint);
+        vm.stopPrank();
+    }
+
+    function testRevertBreakHealthFactor() public {
+        vm.prank(USER);
+        vm.expectRevert(abi.encodeWithSelector(DSCEngine.DSCEngine__BreakHealthFactor.selector, 0));
+        dsce.mintDsc(amountToMint);
+        vm.stopPrank();
+    }
+
+    function testHealthFactorWhenDscTokenIsNotMinted() public depositedCollateral {
+        vm.prank(USER);
+        uint256 healthFactor = dsce.getUserHealthFactor(USER);
+        uint256 expectedHealthFactor = type(uint256).max;
+
+        assertEq(healthFactor, expectedHealthFactor);
+        vm.stopPrank();
+    }
+
+    function testHealthFactorWhenDscTokenIsMinted() public depositedCollateral {
+        vm.prank(USER);
+        dsce.mintDsc(amountToMint);
+
+        uint256 healthFactor = dsce.getUserHealthFactor(USER);
+        console.log("healthFactor :", healthFactor);
+        // 100_000_000_000_000_000_000
+
+        // maximum threshold = 10000
+        // amountToMint = 100
+        // expectedHealthFactor = 10000 / 100 = 100
+
+        uint256 expectedHealthFactor = 100e18;
+        assertEq(healthFactor, expectedHealthFactor);
+        vm.stopPrank();
+    }
 }
+
+//  src/DSCEngine.sol               | 35.38% (23/65)  | 34.78% (32/92)  | 10.00% (1/10) | 27.27% (6/22)  |
+
+//  src/DSCEngine.sol               | 35.38% (23/65)  | 34.78% (32/92)  | 10.00% (1/10) | 27.27% (6/22)  |
+
+// src/DSCEngine.sol               | 50.77% (33/65)  | 51.09% (47/92)  | 10.00% (1/10) | 40.91% (9/22)
+
+// src/DSCEngine.sol               | 51.52% (34/66)  | 51.61% (48/93)  | 10.00% (1/10) | 43.48% (10/23)
+
+// src/DSCEngine.sol          | 51.52% (34/66)  | 52.69% (49/93)  | 20.00% (2/10) | 43.48% (10/23)
+
+//  src/DSCEngine.sol               | 53.03% (35/66)  | 53.76% (50/93)  | 20.00% (2/10) | 47.83% (11/23)
