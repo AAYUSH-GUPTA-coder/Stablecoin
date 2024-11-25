@@ -17,7 +17,8 @@ contract DSCEngineTest is Test {
     address ethUsdPriceFeed;
     address weth;
     address btcUsdPriceFeed;
-    uint256 amountToMint = 100 ether;
+    uint256 amountToMint = 100 ether; // 100 DSC
+    uint256 amountCollateral = 10 ether;
 
     address[] public tokenAddresses;
     address[] public priceFeedAddresses;
@@ -32,6 +33,29 @@ contract DSCEngineTest is Test {
         (ethUsdPriceFeed, btcUsdPriceFeed, weth,,) = config.activeNetworkConfig();
 
         ERC20Mock(weth).mint(USER, STARTING_ERC20_BALANCE);
+    }
+
+    modifier depositedCollateral() {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(dsce), AMOUNT_COLLATERAL);
+        dsce.depositCollateral(weth, AMOUNT_COLLATERAL);
+        vm.stopPrank();
+        _;
+    }
+
+    modifier approveCollateral() {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(dsce), AMOUNT_COLLATERAL);
+        vm.stopPrank();
+        _;
+    }
+
+    modifier depositedCollateralAndMint() {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(dsce), AMOUNT_COLLATERAL);
+        dsce.depositCollateralAndMintDsc(weth, amountCollateral, amountToMint); // 10 ETH, 100 DSC
+        vm.stopPrank();
+        _;
     }
 
     /////////////////////////////
@@ -87,13 +111,6 @@ contract DSCEngineTest is Test {
         vm.stopPrank();
     }
 
-    modifier approveCollateral() {
-        vm.startPrank(USER);
-        ERC20Mock(weth).approve(address(dsce), AMOUNT_COLLATERAL);
-        vm.stopPrank();
-        _;
-    }
-
     function testRevertWithNeedsMoreThanZero() public approveCollateral {
         vm.startPrank(USER);
         // ERC20Mock(weth).approve(address(dsce), AMOUNT_COLLATERAL);
@@ -108,14 +125,6 @@ contract DSCEngineTest is Test {
         vm.expectEmit(true, true, true, true);
         emit DSCEngine.CollateralDeposited(USER, weth, AMOUNT_COLLATERAL);
         dsce.depositCollateral(weth, AMOUNT_COLLATERAL);
-    }
-
-    modifier depositedCollateral() {
-        vm.startPrank(USER);
-        ERC20Mock(weth).approve(address(dsce), AMOUNT_COLLATERAL);
-        dsce.depositCollateral(weth, AMOUNT_COLLATERAL);
-        vm.stopPrank();
-        _;
     }
 
     function testCanDepositCollateralAndGetAccountInfo() public depositedCollateral {
@@ -178,6 +187,47 @@ contract DSCEngineTest is Test {
         assertEq(healthFactor, expectedHealthFactor);
         vm.stopPrank();
     }
+
+    /////////////////////////////////////////////////////
+    // depositCollateralAndMintDsc Tests                //
+    /////////////////////////////////////////////////////
+    function testRevertIfCollateralIsZero() public {
+        vm.prank(USER);
+        vm.expectRevert(DSCEngine.DSCEngine__NeedsMoreThanZero.selector);
+        dsce.depositCollateralAndMintDsc(weth, 0, amountToMint);
+        vm.stopPrank();
+    }
+
+    function testRevertIfDscIsZero() public {
+        vm.prank(USER);
+        vm.expectRevert(DSCEngine.DSCEngine__NeedsMoreThanZero.selector);
+        dsce.depositCollateralAndMintDsc(weth, amountCollateral, 0);
+        vm.stopPrank();
+    }
+
+    function testRevertIfTokenNotAllowed() public {
+        vm.prank(USER);
+        vm.expectRevert(DSCEngine.DSCEngine__TokenNotAllowed.selector);
+        dsce.depositCollateralAndMintDsc(address(1), amountCollateral, 0);
+        vm.stopPrank();
+    }
+
+    function testCanDepositCollateralAndMintDsc() public depositedCollateralAndMint {
+        vm.prank(USER);
+        uint256 userBalance = dsce.getDSCMinted(USER);
+        assertEq(userBalance, amountToMint);
+        vm.stopPrank();
+    }
+
+    function testRevertIfHealthFactorBrokeWhenDscAmountIsGreater() public approveCollateral {
+        vm.prank(USER);
+        uint256 amountToMintToFail = 20000 ether;
+        vm.expectRevert(abi.encodeWithSelector(DSCEngine.DSCEngine__BreakHealthFactor.selector, 0.5 ether));
+        dsce.depositCollateralAndMintDsc(weth, amountCollateral, amountToMintToFail);
+        vm.stopPrank();
+    }
+
+    // 500_000_000_000_000_000
 }
 
 //  src/DSCEngine.sol               | 35.38% (23/65)  | 34.78% (32/92)  | 10.00% (1/10) | 27.27% (6/22)  |
@@ -191,3 +241,7 @@ contract DSCEngineTest is Test {
 // src/DSCEngine.sol          | 51.52% (34/66)  | 52.69% (49/93)  | 20.00% (2/10) | 43.48% (10/23)
 
 //  src/DSCEngine.sol               | 53.03% (35/66)  | 53.76% (50/93)  | 20.00% (2/10) | 47.83% (11/23)
+
+// src/DSCEngine.sol               | 53.03% (35/66)  | 53.76% (50/93)  | 20.00% (2/10) | 52.17% (12/23)
+
+// src/DSCEngine.sol               | 56.06% (37/66)  | 55.91% (52/93)  | 20.00% (2/10) | 52.17% (12/23)
