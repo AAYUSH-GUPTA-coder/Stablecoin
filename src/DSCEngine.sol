@@ -141,13 +141,23 @@ contract DSCEngine is ReentrancyGuard {
      * @param _amountCollateral amount of collateral token
      * @param _amountDscToBurn amount of DSC token to burn
      */
+    // function redeemCollateralForDsc(
+    //     address _tokenCollateralAddress,
+    //     uint256 _amountCollateral,
+    //     uint256 _amountDscToBurn
+    // ) external {
+    //     burnDsc(_amountDscToBurn);
+    //     redeemCollateral(_tokenCollateralAddress, _amountCollateral); // redeemCollateral already checks health factor
+    // }
+
     function redeemCollateralForDsc(
         address _tokenCollateralAddress,
         uint256 _amountCollateral,
         uint256 _amountDscToBurn
-    ) external {
-        burnDsc(_amountDscToBurn);
-        redeemCollateral(_tokenCollateralAddress, _amountCollateral); // redeemCollateral already checks health factor
+    ) external moreThanZero(_amountCollateral) isAllowedToken(_tokenCollateralAddress) {
+        _burnDsc(_amountDscToBurn, msg.sender, msg.sender);
+        _redeemCollateral(msg.sender, msg.sender, _tokenCollateralAddress, _amountCollateral);
+        _revertIfHealthFactorIsBroken(msg.sender);
     }
 
     //************************* */
@@ -412,6 +422,15 @@ contract DSCEngine is ReentrancyGuard {
 
     function getUserHealthFactor(address _user) external view returns (uint256 healthFactor) {
         healthFactor = _healthFactor(_user);
+    }
+
+    /**
+     * function to get the Collateral Token amount deposited by the user
+     * @param _collateralToken address of the collateral Token
+     * @param _user address of the user
+     */
+    function getCollateralTokenAmount(address _collateralToken, address _user) external view returns (uint256) {
+        return s_collateralDeposited[_user][_collateralToken];
     }
 
     function getCollateralValue() external view returns (uint256) {}
