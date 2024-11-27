@@ -6,8 +6,9 @@ import {DeployDSC} from "../../script/DeployDSC.s.sol";
 import {DecentralizedStableCoin} from "../../src/DecentralizedStableCoin.sol";
 import {DSCEngine} from "../../src/DSCEngine.sol";
 import {HelperConfig} from "../../script/HelperConfig.s.sol";
-import {ERC20Mock} from
-    "@chainlink/contracts/src/v0.8/vendor/openzeppelin-solidity/v4.8.3/contracts/mocks/ERC20Mock.sol";
+// import {ERC20Mock} from
+//     "@chainlink/contracts/src/v0.8/vendor/openzeppelin-solidity/v4.8.3/contracts/mocks/ERC20Mock.sol";
+import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 
 contract DSCEngineTest is Test {
     DeployDSC deployer;
@@ -25,8 +26,10 @@ contract DSCEngineTest is Test {
     address[] public priceFeedAddresses;
 
     address public USER = makeAddr("user");
+    address public LIQUIDATER = makeAddr("LIQUIDATER");
     uint256 public constant AMOUNT_COLLATERAL = 10 ether;
     uint256 public constant STARTING_ERC20_BALANCE = 10 ether;
+    uint256 public constant LIQUIDATER_BALANCE = 100 ether;
 
     function setUp() public {
         deployer = new DeployDSC();
@@ -34,6 +37,7 @@ contract DSCEngineTest is Test {
         (ethUsdPriceFeed, btcUsdPriceFeed, weth,,) = config.activeNetworkConfig();
 
         ERC20Mock(weth).mint(USER, STARTING_ERC20_BALANCE);
+        ERC20Mock(weth).mint(LIQUIDATER, LIQUIDATER_BALANCE);
     }
 
     ///////////////////////////////
@@ -286,7 +290,7 @@ contract DSCEngineTest is Test {
     }
 
     /////////////////////////////////////////
-    // Burn Tests                          //
+    // burnDsc Tests                          //
     /////////////////////////////////////////
 
     function testRevertIfBurnDscIsZero() public depositedCollateralAndMint {
@@ -303,37 +307,103 @@ contract DSCEngineTest is Test {
         vm.stopPrank();
     }
 
-    function testCanActualBurnDsc() public depositedCollateralAndMint {
+    function testCanBurnDsc() public depositedCollateralAndMint {
+        vm.startPrank(USER);
+        dsc.approve(address(dsce), amountToMint);
+        dsce.burnDsc(10 ether);
+        vm.stopPrank();
+
+        uint256 userBalance = dsc.balanceOf(USER);
+        assertEq(userBalance, 90 ether);
+    }
+
+    function testRevertIfApprovalIsNotGivenForBurnDsc() public depositedCollateralAndMint {
+        vm.startPrank(USER);
+        vm.expectRevert();
+        dsce.burnDsc(10 ether);
+        vm.stopPrank();
+    }
+
+    ///////////////////////////////////////////////////////////
+    // redeemCollateralForDsc Tests                          //
+    ///////////////////////////////////////////////////////////
+
+    function testRedeemCollateralForDscValidCollateralAddress() public depositedCollateralAndMint {
         vm.prank(USER);
-        uint256 amountToBurn = 50 ether;
-        (uint256 dscBalanceBeforeBurn,) = dsce.getAccountInformation(USER);
-        console.log("dscBalanceBeforeBurn", dscBalanceBeforeBurn);
-        // 100,_000_000_000_000_000_000
-        uint256 expectedDscBalance = dscBalanceBeforeBurn - amountToBurn;
-        console.log("expectedDscBalance", expectedDscBalance);
+        vm.expectRevert(DSCEngine.DSCEngine__TokenNotAllowed.selector);
+        dsce.redeemCollateralForDsc(address(0), 1 ether, 100 ether);
+    }
 
-        dsce.burnDsc(amountToBurn);
+    function testRevertIfCollateralAddressIsZeroInRedeemCollateralForDsc() public depositedCollateralAndMint {
+        vm.prank(USER);
+        vm.expectRevert(DSCEngine.DSCEngine__NeedsMoreThanZero.selector);
+        dsce.redeemCollateralForDsc(weth, 0, 100 ether);
+    }
 
-        (uint256 dscBalanceAfterBurn,) = dsce.getAccountInformation(USER);
-        assertEq(dscBalanceAfterBurn, expectedDscBalance);
+    function testCanRedeemDepositedCollateral() public {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(dsce), amountCollateral);
+        dsce.depositCollateralAndMintDsc(weth, amountCollateral, amountToMint);
+        dsc.approve(address(dsce), amountToMint);
+        dsce.redeemCollateralForDsc(weth, amountCollateral, amountToMint);
+        vm.stopPrank();
+
+        uint256 userBalance = dsc.balanceOf(USER);
+        assertEq(userBalance, 0);
+    }
+
+    function testRevertIfHealthFactorBrokeRedeemDepositedCollateral() public {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(dsce), amountCollateral);
+        // dsce.depositCollateral(weth, )
+        dsce.depositCollateralAndMintDsc(weth, amountCollateral, amountToMint);
+        dsc.approve(address(dsce), amountToMint);
+
+        vm.expectRevert(abi.encodeWithSelector(DSCEngine.DSCEngine__BreakHealthFactor.selector, 0));
+        dsce.redeemCollateralForDsc(weth, amountCollateral, 1 ether);
+        vm.stopPrank();
+    }
+
+    //////////////////////////////////////////////
+    // liquidate Tests                          //
+    ///////////////////////////////////////////////
+
+    function testRevertWhenCollateralTokenIsNotApproved() public depositedCollateralAndMint {
+        vm.prank(USER);
+        vm.expectRevert(DSCEngine.DSCEngine__TokenNotAllowed.selector);
+        dsce.liquidate(address(0), USER, 1 ether);
+    }
+
+    function testRevertWhenDebtToCoverIsZero() public depositedCollateralAndMint {
+        vm.prank(USER);
+        vm.expectRevert(DSCEngine.DSCEngine__NeedsMoreThanZero.selector);
+        dsce.liquidate(weth, USER, 0);
+    }
+
+    function testRevertWhenHealthFactorIsOk() public depositedCollateralAndMint {
+        vm.startPrank(USER);
+        vm.expectRevert(DSCEngine.DSCEngine__HealthFactorOK.selector);
+        dsce.liquidate(weth, USER, 0.1 ether);
+        vm.stopPrank();
+    }
+
+    function testCanLiquidate() public depositedCollateralAndMint {
+        vm.startPrank(USER);
+        
         vm.stopPrank();
     }
 }
-
-//  src/DSCEngine.sol               | 35.38% (23/65)  | 34.78% (32/92)  | 10.00% (1/10) | 27.27% (6/22)  |
-
-//  src/DSCEngine.sol               | 35.38% (23/65)  | 34.78% (32/92)  | 10.00% (1/10) | 27.27% (6/22)  |
-
-// src/DSCEngine.sol               | 50.77% (33/65)  | 51.09% (47/92)  | 10.00% (1/10) | 40.91% (9/22)
-
-// src/DSCEngine.sol               | 51.52% (34/66)  | 51.61% (48/93)  | 10.00% (1/10) | 43.48% (10/23)
-
-// src/DSCEngine.sol          | 51.52% (34/66)  | 52.69% (49/93)  | 20.00% (2/10) | 43.48% (10/23)
-
-//  src/DSCEngine.sol               | 53.03% (35/66)  | 53.76% (50/93)  | 20.00% (2/10) | 47.83% (11/23)
 
 // src/DSCEngine.sol               | 53.03% (35/66)  | 53.76% (50/93)  | 20.00% (2/10) | 52.17% (12/23)
 
 // src/DSCEngine.sol               | 56.06% (37/66)  | 55.91% (52/93)  | 20.00% (2/10) | 52.17% (12/23)
 
 // src/DSCEngine.sol               | 65.15% (43/66)  | 63.44% (59/93)   | 20.00% (2/10) | 60.87% (14/23) |
+
+// src/DSCEngine.sol               | 72.06% (49/68)  | 69.47% (66/95)   | 20.00% (2/10) | 66.67% (16/24)
+
+//  src/DSCEngine.sol               | 76.47% (52/68)  | 72.63% (69/95)   | 20.00% (2/10) | 70.83% (17/24) |
+
+// src/DSCEngine.sol               | 76.47% (52/68)  | 72.63% (69/95)   | 20.00% (2/10) | 70.83% (17/24)
+
+// src/DSCEngine.sol               | 79.41% (54/68)  | 74.74% (71/95)   | 30.00% (3/10) | 79.17% (19/24)
