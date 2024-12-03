@@ -315,6 +315,16 @@ contract DSCEngine is ReentrancyGuard {
         collateralValueInUsd = getAccountCollateralValueInUsd(_user);
     }
 
+    function _calculateHealthFactor(uint256 _totalDscMinted, uint256 _collateralValueInUsd)
+        internal
+        pure
+        returns (uint256)
+    {
+        if (_totalDscMinted == 0) return type(uint256).max;
+        uint256 collateralAdjustedForThreshold = (_collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+        return (collateralAdjustedForThreshold * PRECISION) / _totalDscMinted;
+    }
+
     /**
      * Returns how close to liquidation a user is
      * if a user goes below 1, they can get liquidated
@@ -338,12 +348,13 @@ contract DSCEngine is ReentrancyGuard {
         // }
 
         (uint256 totalDscMinted, uint256 collateralValueInUsd) = _getAccountInformation(_user);
-        if (totalDscMinted == 0) return type(uint256).max;
+        // if (totalDscMinted == 0) return type(uint256).max;
 
-        // (1000 * 50) / 100
-        // 50,000 / 100 = 500
-        uint256 collateralAdjustedForThreshold = (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
-        return (collateralAdjustedForThreshold * PRECISION) / totalDscMinted;
+        // // (1000 * 50) / 100
+        // // 50,000 / 100 = 500
+        // uint256 collateralAdjustedForThreshold = (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+        // return (collateralAdjustedForThreshold * PRECISION) / totalDscMinted;
+        return _calculateHealthFactor(totalDscMinted, collateralValueInUsd);
     }
 
     function _revertIfHealthFactorIsBroken(address user) internal view {
@@ -430,5 +441,13 @@ contract DSCEngine is ReentrancyGuard {
 
     function getDSCMinted(address _user) external view returns (uint256 balance) {
         balance = s_DSCMinted[_user];
+    }
+
+    function calculateHealthFactor(uint256 _totalDscMinted, uint256 _collateralValueInUsd)
+        external
+        pure
+        returns (uint256)
+    {
+        return _calculateHealthFactor(_totalDscMinted, _collateralValueInUsd);
     }
 }
