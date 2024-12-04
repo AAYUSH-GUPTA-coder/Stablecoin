@@ -2,12 +2,17 @@
 pragma solidity ^0.8.24;
 
 import {Test, console} from "forge-std/Test.sol";
+import {StdCheats} from "forge-std/StdCheats.sol";
 import {DeployDSC} from "../../script/DeployDSC.s.sol";
 import {DecentralizedStableCoin} from "../../src/DecentralizedStableCoin.sol";
 import {DSCEngine} from "../../src/DSCEngine.sol";
 import {HelperConfig} from "../../script/HelperConfig.s.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
-import { MockFailedMintDSC } from "../mocks/MockFailedMintDSC.sol";
+import {MockFailedMintDSC} from "../mocks/MockFailedMintDSC.sol";
+import {MockFailedTransferFrom} from "../mocks/MockFailedTransferFrom.sol";
+import {MockMoreDebtDSC} from "../mocks/MockMoreDebtDSC.sol";
+import {MockV3Aggregator} from "../mocks/MockV3Aggregator.sol";
+import {MockFailedTransfer} from "../mocks/MockFailedTransfer.sol";
 
 contract DSCEngineTest is Test {
     DeployDSC deployer;
@@ -29,6 +34,10 @@ contract DSCEngineTest is Test {
     uint256 public constant AMOUNT_COLLATERAL = 10 ether;
     uint256 public constant STARTING_ERC20_BALANCE = 10 ether;
     uint256 public constant LIQUIDATER_BALANCE = 100 ether;
+
+    // Liquidation
+    address public liquidator = makeAddr("liquidator");
+    uint256 public collateralToCover = 20 ether;
 
     function setUp() public {
         deployer = new DeployDSC();
@@ -114,6 +123,30 @@ contract DSCEngineTest is Test {
     ///////////////////////////////////
     // DepositCollateral Tests      //
     //////////////////////////////////
+
+    // this test needs it's own setup
+    function testRevertsIfTransferFromFails() public {
+        // Arrange - Setup
+        address owner = msg.sender;
+        vm.prank(owner);
+        MockFailedTransferFrom mockDsc = new MockFailedTransferFrom();
+        tokenAddresses = [address(mockDsc)];
+        priceFeedAddresses = [ethUsdPriceFeed];
+        vm.prank(owner);
+        DSCEngine mockDsce = new DSCEngine(tokenAddresses, priceFeedAddresses, address(mockDsc));
+        mockDsc.mint(USER, amountCollateral);
+
+        vm.prank(owner);
+        mockDsc.transferOwnership(address(mockDsce));
+        // Arrange - User
+        vm.startPrank(USER);
+        ERC20Mock(address(mockDsc)).approve(address(mockDsce), amountCollateral);
+        // Act / Assert
+        vm.expectRevert(DSCEngine.DSCEngine__TransferFailed.selector);
+        mockDsce.depositCollateral(address(mockDsc), amountCollateral);
+        vm.stopPrank();
+    }
+
     function testRevertsIfCollateralZero() public {
         vm.startPrank(USER);
         ERC20Mock(weth).approve(address(dsce), AMOUNT_COLLATERAL);
@@ -269,6 +302,31 @@ contract DSCEngineTest is Test {
     /////////////////////////////////////////////////////
     // RedeemCollateral Tests                          //
     /////////////////////////////////////////////////////
+
+    // this test needs it's own setup
+    function testRevertsIfTransferFails() public {
+        // Arrange - Setup
+        address owner = msg.sender;
+        vm.prank(owner);
+        MockFailedTransfer mockDsc = new MockFailedTransfer();
+        tokenAddresses = [address(mockDsc)];
+        priceFeedAddresses = [ethUsdPriceFeed];
+        vm.prank(owner);
+        DSCEngine mockDsce = new DSCEngine(tokenAddresses, priceFeedAddresses, address(mockDsc));
+        mockDsc.mint(USER, amountCollateral);
+
+        vm.prank(owner);
+        mockDsc.transferOwnership(address(mockDsce));
+        // Arrange - User
+        vm.startPrank(USER);
+        ERC20Mock(address(mockDsc)).approve(address(mockDsce), amountCollateral);
+        // Act / Assert
+        mockDsce.depositCollateral(address(mockDsc), amountCollateral);
+        vm.expectRevert(DSCEngine.DSCEngine__TransferFailed.selector);
+        mockDsce.redeemCollateral(address(mockDsc), amountCollateral);
+        vm.stopPrank();
+    }
+
     function testCanRedeemCollateral() public depositCollateralAndRedeem {
         vm.prank(USER);
         uint256 expectedCollateralBalance =
@@ -386,6 +444,40 @@ contract DSCEngineTest is Test {
     // liquidate Tests                          //
     ///////////////////////////////////////////////
 
+    // This test needs it's own setup
+    function testMustImproveHealthFactorOnLiquidation() public {
+        // Arrange - Setup
+        MockMoreDebtDSC mockDsc = new MockMoreDebtDSC(ethUsdPriceFeed);
+        tokenAddresses = [weth];
+        priceFeedAddresses = [ethUsdPriceFeed];
+        address owner = msg.sender;
+        vm.prank(owner);
+        DSCEngine mockDsce = new DSCEngine(tokenAddresses, priceFeedAddresses, address(mockDsc));
+        mockDsc.transferOwnership(address(mockDsce));
+        // Arrange - User
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(mockDsce), amountCollateral);
+        mockDsce.depositCollateralAndMintDsc(weth, amountCollateral, amountToMint);
+        vm.stopPrank();
+
+        // Arrange - Liquidator
+        collateralToCover = 1 ether;
+        ERC20Mock(weth).mint(liquidator, collateralToCover);
+
+        vm.startPrank(liquidator);
+        ERC20Mock(weth).approve(address(mockDsce), collateralToCover);
+        uint256 debtToCover = 10 ether;
+        mockDsce.depositCollateralAndMintDsc(weth, collateralToCover, amountToMint);
+        mockDsc.approve(address(mockDsce), debtToCover);
+        // Act
+        int256 ethUsdUpdatedPrice = 18e8; // 1 ETH = $18
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(ethUsdUpdatedPrice);
+        // Act/Assert
+        vm.expectRevert(DSCEngine.DSCEngine__HealthFactorNotImproved.selector);
+        mockDsce.liquidate(weth, USER, debtToCover);
+        vm.stopPrank();
+    }
+
     function testRevertWhenCollateralTokenIsNotApproved() public depositedCollateralAndMint {
         vm.prank(USER);
         vm.expectRevert(DSCEngine.DSCEngine__TokenNotAllowed.selector);
@@ -407,21 +499,7 @@ contract DSCEngineTest is Test {
 
     function testCanLiquidate() public depositedCollateralAndMint {
         vm.startPrank(USER);
-        
+
         vm.stopPrank();
     }
 }
-
-// src/DSCEngine.sol               | 53.03% (35/66)  | 53.76% (50/93)  | 20.00% (2/10) | 52.17% (12/23)
-
-// src/DSCEngine.sol               | 56.06% (37/66)  | 55.91% (52/93)  | 20.00% (2/10) | 52.17% (12/23)
-
-// src/DSCEngine.sol               | 65.15% (43/66)  | 63.44% (59/93)   | 20.00% (2/10) | 60.87% (14/23) |
-
-// src/DSCEngine.sol               | 72.06% (49/68)  | 69.47% (66/95)   | 20.00% (2/10) | 66.67% (16/24)
-
-//  src/DSCEngine.sol               | 76.47% (52/68)  | 72.63% (69/95)   | 20.00% (2/10) | 70.83% (17/24) |
-
-// src/DSCEngine.sol               | 76.47% (52/68)  | 72.63% (69/95)   | 20.00% (2/10) | 70.83% (17/24)
-
-// src/DSCEngine.sol               | 79.41% (54/68)  | 74.74% (71/95)   | 30.00% (3/10) | 79.17% (19/24)
